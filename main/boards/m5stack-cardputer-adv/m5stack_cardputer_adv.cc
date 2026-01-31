@@ -71,7 +71,7 @@ private:
         buscfg.quadwp_io_num = GPIO_NUM_NC;
         buscfg.quadhd_io_num = GPIO_NUM_NC;
         buscfg.max_transfer_sz = DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(uint16_t);
-        ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO));
+        ESP_ERROR_CHECK(spi_bus_initialize(SPI3_HOST, &buscfg, SPI_DMA_CH_AUTO));
     }
 
     void InitializeSt7789Display() {
@@ -81,11 +81,12 @@ private:
         io_config.cs_gpio_num = DISPLAY_SPI_CS_PIN;
         io_config.dc_gpio_num = DISPLAY_DC_PIN;
         io_config.spi_mode = 0;
-        io_config.pclk_hz = 80 * 1000 * 1000;
+        io_config.pclk_hz = 40 * 1000 * 1000;
         io_config.trans_queue_depth = 10;
         io_config.lcd_cmd_bits = 8;
         io_config.lcd_param_bits = 8;
-        ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(SPI2_HOST, &io_config, &panel_io_));
+        io_config.flags.sio_mode = 1;  // 3-wire SPI mode
+        ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(SPI3_HOST, &io_config, &panel_io_));
 
         ESP_LOGI(TAG, "Install ST7789 panel driver");
         esp_lcd_panel_dev_config_t panel_config = {};
