@@ -22,6 +22,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache ESP-IDF components
+        uses: actions/cache@v4
+        with:
+          path: |
+            managed_components
+            dependencies.lock
+          key: idf-components-${{ hashFiles('main/idf_component.yml', 'idf_component.yml') }}
+          restore-keys: |
+            idf-components-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: |
+            ccache-
+
       - name: Build Cardputer Adv
         shell: bash
         run: |
