@@ -282,8 +282,9 @@ KeyEvent Tca8418Keyboard::MapKeyEvent(uint8_t row, uint8_t col, bool pressed) {
     bool is_letter = (event.key_code >= KC_A && event.key_code <= KC_Z);
 
     if (is_letter) {
-        // For letters, use shift OR caps lock
-        use_shifted = (modifier_mask_ & KEY_MOD_SHIFT) || caps_lock_on_;
+        // For letters, use XOR of shift and caps lock (Shift reverses CapsLock)
+        bool shift_pressed = (modifier_mask_ & KEY_MOD_SHIFT) != 0;
+        use_shifted = shift_pressed != caps_lock_on_;  // XOR semantics
     } else {
         // For non-letters (numbers, symbols), only use shift
         use_shifted = (modifier_mask_ & KEY_MOD_SHIFT) != 0;

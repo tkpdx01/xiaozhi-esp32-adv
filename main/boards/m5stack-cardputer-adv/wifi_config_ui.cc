@@ -1,6 +1,7 @@
 #include "wifi_config_ui.h"
 #include <esp_log.h>
 #include <esp_wifi.h>
+#include <wifi_manager.h>
 #include <ssid_manager.h>
 #include <cstring>
 
@@ -39,8 +40,25 @@ void WifiConfigUI::Start() {
     StartScanning();
 }
 
+void WifiConfigUI::StartWithSavedList() {
+    ESP_LOGI(TAG, "Starting WiFi config UI with saved list");
+    is_active_ = true;
+    selected_index_ = 0;
+    scroll_offset_ = 0;
+    input_ssid_.clear();
+    input_password_.clear();
+    selected_ssid_.clear();
+
+    // Load saved WiFi list and show it directly
+    LoadSavedWifiList();
+    ShowSavedList();
+}
+
 void WifiConfigUI::StartScanning() {
     state_ = WifiConfigState::Scanning;
+
+    lv_obj_t* canvas = lv_scr_act();
+    lv_obj_clean(canvas);
     DrawHeader("扫描 WiFi 中...");
     DrawFooter("请稍候...");
 
@@ -49,6 +67,7 @@ void WifiConfigUI::StartScanning() {
 
     // Show results
     if (scan_results_.empty()) {
+        lv_obj_clean(canvas);
         DrawHeader("未找到 WiFi");
         DrawFooter("W:手动输入 Esc:退出");
     } else {
@@ -60,11 +79,8 @@ void WifiConfigUI::StartScanning() {
 void WifiConfigUI::DoWifiScan() {
     scan_results_.clear();
 
-    // Initialize WiFi if not already done
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    esp_wifi_start();
+    // Use WifiManager's scan capability if available, otherwise do direct scan
+    // Note: We need to be careful not to disrupt existing WiFi state
 
     // Configure scan
     wifi_scan_config_t scan_config = {};
@@ -73,7 +89,7 @@ void WifiConfigUI::DoWifiScan() {
     scan_config.scan_time.active.min = 100;
     scan_config.scan_time.active.max = 300;
 
-    // Start scan (blocking)
+    // Start scan (blocking) - WiFi should already be initialized by WifiManager
     esp_err_t err = esp_wifi_scan_start(&scan_config, true);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "WiFi scan failed: %s", esp_err_to_name(err));
@@ -107,23 +123,26 @@ void WifiConfigUI::DoWifiScan() {
 }
 
 void WifiConfigUI::ShowScanResults() {
-    DrawHeader("选择 WiFi");
     DrawWifiList(scan_results_, selected_index_, scroll_offset_);
-    DrawFooter("↑↓:选择 Enter:连接 W:手动 S:已保存");
 }
 
 void WifiConfigUI::ShowPasswordInput() {
-    state_ = WifiConfigState::InputPassword;
-    input_password_.clear();
-    cursor_visible_ = true;
+    // Only clear password and set state on first entry (not on redraw)
+    if (state_ != WifiConfigState::InputPassword) {
+        state_ = WifiConfigState::InputPassword;
+        input_password_.clear();
+    }
+
+    RedrawPasswordInput();
+}
+
+void WifiConfigUI::RedrawPasswordInput() {
+    lv_obj_t* canvas = lv_scr_act();
+    lv_obj_clean(canvas);
 
     DrawHeader("输入密码");
 
     // Show selected SSID
-    lv_obj_t* canvas = lv_scr_act();
-    lv_obj_clean(canvas);
-
-    // Create a simple text display using LVGL
     lv_obj_t* label = lv_label_create(canvas);
     lv_label_set_text_fmt(label, "连接: %s", selected_ssid_.c_str());
     lv_obj_set_style_text_color(label, lv_color_hex(0x00FF00), 0);
@@ -145,12 +164,18 @@ void WifiConfigUI::ShowPasswordInput() {
 }
 
 void WifiConfigUI::ShowManualInput() {
-    state_ = WifiConfigState::InputSsid;
-    input_ssid_.clear();
-    input_password_.clear();
-    input_focus_on_password_ = false;
-    cursor_visible_ = true;
+    // Only clear inputs and set state on first entry (not on redraw)
+    if (state_ != WifiConfigState::InputSsid && state_ != WifiConfigState::InputManualPwd) {
+        state_ = WifiConfigState::InputSsid;
+        input_ssid_.clear();
+        input_password_.clear();
+        input_focus_on_password_ = false;
+    }
 
+    RedrawManualInput();
+}
+
+void WifiConfigUI::RedrawManualInput() {
     lv_obj_t* canvas = lv_scr_act();
     lv_obj_clean(canvas);
 
@@ -395,8 +420,19 @@ WifiConfigResult WifiConfigUI::HandleKeyEvent(const KeyEvent& event) {
         return WifiConfigResult::None;
     }
 
-    // Update cursor blink
-    UpdateCursor();
+    // Check for ESC to cancel from any state (except Success which needs Enter)
+    if (event.key_code == KC_ESC) {
+        if (state_ == WifiConfigState::Scanning ||
+            state_ == WifiConfigState::SelectWifi) {
+            is_active_ = false;
+            return WifiConfigResult::Cancelled;
+        }
+    }
+
+    // Check if not active (was cancelled in a handler)
+    if (!is_active_) {
+        return WifiConfigResult::Cancelled;
+    }
 
     switch (state_) {
         case WifiConfigState::Scanning:
@@ -430,9 +466,8 @@ WifiConfigResult WifiConfigUI::HandleKeyEvent(const KeyEvent& event) {
             break;
     }
 
-    // Check for global cancel
-    if (event.key_code == KC_ESC && state_ == WifiConfigState::SelectWifi) {
-        is_active_ = false;
+    // Check if cancelled by a handler
+    if (!is_active_) {
         return WifiConfigResult::Cancelled;
     }
 
@@ -442,9 +477,10 @@ WifiConfigResult WifiConfigUI::HandleKeyEvent(const KeyEvent& event) {
 void WifiConfigUI::HandleScanningKey(const KeyEvent& event) {
     if (event.key_code == KC_W) {
         ShowManualInput();
-    } else if (event.key_code == KC_ESC) {
-        is_active_ = false;
+    } else if (event.key_code == KC_S) {
+        ShowSavedList();
     }
+    // ESC is handled in HandleKeyEvent
 }
 
 void WifiConfigUI::HandleSelectWifiKey(const KeyEvent& event) {
@@ -489,6 +525,7 @@ void WifiConfigUI::HandleSelectWifiKey(const KeyEvent& event) {
         default:
             break;
     }
+    // ESC is handled in HandleKeyEvent
 }
 
 void WifiConfigUI::HandlePasswordInputKey(const KeyEvent& event) {
@@ -507,14 +544,14 @@ void WifiConfigUI::HandlePasswordInputKey(const KeyEvent& event) {
         case KC_BACKSPACE:
             if (!input_password_.empty()) {
                 input_password_.pop_back();
-                ShowPasswordInput();
+                RedrawPasswordInput();
             }
             break;
 
         case KC_SPACE:
             if (input_password_.length() < MAX_INPUT_LENGTH) {
                 input_password_ += ' ';
-                ShowPasswordInput();
+                RedrawPasswordInput();
             }
             break;
 
@@ -522,7 +559,7 @@ void WifiConfigUI::HandlePasswordInputKey(const KeyEvent& event) {
             // Add character if it's a printable key
             if (event.key_char && strlen(event.key_char) > 0 && input_password_.length() < MAX_INPUT_LENGTH) {
                 input_password_ += event.key_char;
-                ShowPasswordInput();
+                RedrawPasswordInput();
             }
             break;
     }
@@ -539,7 +576,7 @@ void WifiConfigUI::HandleManualInputKey(const KeyEvent& event) {
             } else {
                 state_ = WifiConfigState::InputSsid;
             }
-            ShowManualInput();
+            RedrawManualInput();
             break;
 
         case KC_ENTER:
@@ -557,14 +594,14 @@ void WifiConfigUI::HandleManualInputKey(const KeyEvent& event) {
         case KC_BACKSPACE:
             if (!current_input->empty()) {
                 current_input->pop_back();
-                ShowManualInput();
+                RedrawManualInput();
             }
             break;
 
         case KC_SPACE:
             if (current_input->length() < MAX_INPUT_LENGTH) {
                 *current_input += ' ';
-                ShowManualInput();
+                RedrawManualInput();
             }
             break;
 
@@ -572,7 +609,7 @@ void WifiConfigUI::HandleManualInputKey(const KeyEvent& event) {
             // Add character if it's a printable key
             if (event.key_char && strlen(event.key_char) > 0 && current_input->length() < MAX_INPUT_LENGTH) {
                 *current_input += event.key_char;
-                ShowManualInput();
+                RedrawManualInput();
             }
             break;
     }
@@ -642,8 +679,9 @@ void WifiConfigUI::HandleResultKey(const KeyEvent& event) {
         }
     } else if (state_ == WifiConfigState::Failed) {
         if (event.key_code == KC_ENTER) {
-            // Retry - go back to password input
-            ShowPasswordInput();
+            // Retry - go back to password input (keep password for retry)
+            state_ = WifiConfigState::InputPassword;
+            RedrawPasswordInput();
         } else if (event.key_code == KC_ESC) {
             state_ = WifiConfigState::SelectWifi;
             ShowScanResults();
@@ -657,11 +695,11 @@ void WifiConfigUI::UpdateCursor() {
         cursor_visible_ = !cursor_visible_;
         last_cursor_toggle_ = now;
 
-        // Refresh display for input states
+        // Refresh display for input states (use Redraw functions to avoid clearing input)
         if (state_ == WifiConfigState::InputPassword) {
-            ShowPasswordInput();
+            RedrawPasswordInput();
         } else if (state_ == WifiConfigState::InputSsid || state_ == WifiConfigState::InputManualPwd) {
-            ShowManualInput();
+            RedrawManualInput();
         }
     }
 }

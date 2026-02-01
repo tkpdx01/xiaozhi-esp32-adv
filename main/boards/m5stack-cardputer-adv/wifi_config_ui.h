@@ -44,6 +44,9 @@ public:
     // Start the WiFi configuration UI
     void Start();
 
+    // Start directly with saved WiFi list
+    void StartWithSavedList();
+
     // Handle keyboard events, returns result
     WifiConfigResult HandleKeyEvent(const KeyEvent& event);
 
@@ -96,6 +99,10 @@ private:
     void ShowConnecting();
     void ShowSuccess();
     void ShowFailed();
+
+    // Redraw functions (don't reset state/input)
+    void RedrawPasswordInput();
+    void RedrawManualInput();
 
     // Input handlers
     void HandleScanningKey(const KeyEvent& event);

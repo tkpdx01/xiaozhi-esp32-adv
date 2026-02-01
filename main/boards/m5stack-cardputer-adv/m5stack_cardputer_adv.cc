@@ -263,8 +263,7 @@ private:
         wifi_config_ui_->SetConnectCallback([this](const std::string& ssid, const std::string& password) {
             AttemptWifiConnection(ssid, password);
         });
-        wifi_config_ui_->Start();
-        // TODO: Navigate directly to saved list
+        wifi_config_ui_->StartWithSavedList();
     }
 
     void AttemptWifiConnection(const std::string& ssid, const std::string& password) {
