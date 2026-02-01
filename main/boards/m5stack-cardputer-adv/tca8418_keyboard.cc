@@ -115,6 +115,25 @@ static const KeyValue KEY_MAP[4][14] = {
      {" ", KC_SPACE, " ", KC_SPACE}}
 };
 
+// Cardputer Adv uses TCA8418 in a 7x8 matrix, but the physical keyboard layout
+// matches Cardputer's 4x14 mapping. Remap raw (row,col) from the 7x8 scan into
+// the 4x14 logical layout (based on M5Cardputer-UserDemo CardputerADV branch).
+static inline bool RemapRawKeyToLogical(uint8_t& row, uint8_t& col) {
+    // Raw scan: row 0..6, col 0..7
+    if (row >= 7 || col >= 8) {
+        return false;
+    }
+
+    // Col: every raw row contributes two logical columns (left/right half)
+    uint8_t mapped_col = (row * 2) + ((col > 3) ? 1 : 0);  // 0..13
+    // Row: derived from raw col (wrap every 4)
+    uint8_t mapped_row = (col + 4) % 4;                    // 0..3
+
+    row = mapped_row;
+    col = mapped_col;
+    return true;
+}
+
 Tca8418Keyboard::Tca8418Keyboard(i2c_master_bus_handle_t i2c_bus, uint8_t addr, gpio_num_t int_pin)
     : I2cDevice(i2c_bus, addr), int_pin_(int_pin) {
 }
@@ -141,10 +160,12 @@ void Tca8418Keyboard::Initialize() {
 
     // Configure GPIO interrupt pin
     gpio_config_t io_conf = {};
-    io_conf.intr_type = GPIO_INTR_NEGEDGE;  // Interrupt on falling edge
+    // IRQ is active-low and can stay low while events are pending, so use ANYEDGE.
+    io_conf.intr_type = GPIO_INTR_ANYEDGE;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pin_bit_mask = (1ULL << int_pin_);
-    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    // Cardputer Adv board provides external pull-ups; keep internal pulls disabled.
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     gpio_config(&io_conf);
 
@@ -159,18 +180,13 @@ void Tca8418Keyboard::Initialize() {
 }
 
 void Tca8418Keyboard::ConfigureMatrix() {
-    // Configure rows 0-3 as keypad rows (R0-R3)
-    // Configure cols 0-13 as keypad columns (C0-C9 + R4-R7 as C10-C13)
+    // Cardputer Adv keyboard is wired as a 7x8 matrix (rows: R0-R6, cols: C0-C7).
     // KP_GPIO1: R0-R7 (bits 0-7)
     // KP_GPIO2: C0-C7 (bits 0-7)
-    // KP_GPIO3: C8-C9 (bits 0-1)
-
-    // Set rows R0-R3 as keypad rows
-    WriteReg(TCA8418_REG_KP_GPIO_1, 0x0F);  // R0-R3 as keypad
-    // Set columns C0-C7 as keypad columns
-    WriteReg(TCA8418_REG_KP_GPIO_2, 0xFF);  // C0-C7 as keypad
-    // Set C8-C9 and R4-R7 as keypad (for extended columns)
-    WriteReg(TCA8418_REG_KP_GPIO_3, 0xFF);  // C8-C9 + R4-R7 as keypad
+    // KP_GPIO3: C8-C9 + GPIO (unused here)
+    WriteReg(TCA8418_REG_KP_GPIO_1, 0x7F);  // R0-R6
+    WriteReg(TCA8418_REG_KP_GPIO_2, 0xFF);  // C0-C7
+    WriteReg(TCA8418_REG_KP_GPIO_3, 0x00);  // no extended cols
 }
 
 void Tca8418Keyboard::EnableInterrupts() {
@@ -318,62 +334,62 @@ void Tca8418Keyboard::KeyboardTask(void* arg) {
         // Wait for interrupt notification
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        if (!keyboard->isr_flag_) {
-            continue;
-        }
-        keyboard->isr_flag_ = false;
+        // Small delay for debounce / allow event FIFO to fill
+        vTaskDelay(pdMS_TO_TICKS(5));
 
-        // Small delay for debounce
-        vTaskDelay(pdMS_TO_TICKS(10));
+        // Drain pending key events until the IRQ condition clears.
+        for (int guard = 0; guard < 128; guard++) {
+            uint8_t int_stat = keyboard->ReadReg(TCA8418_REG_INT_STAT);
+            if ((int_stat & TCA8418_INT_STAT_K_INT) == 0) {
+                keyboard->isr_flag_ = false;
+                break;
+            }
 
-        // Read interrupt status
-        uint8_t int_stat = keyboard->ReadReg(TCA8418_REG_INT_STAT);
+            uint8_t event = keyboard->GetEvent();
+            if (event == 0) {
+                // No event available, try clearing and re-checking.
+                keyboard->WriteReg(TCA8418_REG_INT_STAT, 0x1F);
+                vTaskDelay(pdMS_TO_TICKS(1));
+                continue;
+            }
 
-        if (int_stat & TCA8418_INT_STAT_K_INT) {
-            // Read key events
-            uint8_t event;
-            while ((event = keyboard->GetEvent()) != 0) {
-                // Event format: bit 7 = press(1)/release(0), bits 6-0 = key code
-                bool pressed = (event & 0x80) != 0;
-                uint8_t key_code = event & 0x7F;
+            bool pressed = (event & 0x80) != 0;
+            uint8_t key_code = event & 0x7F;
+            if (key_code == 0) {
+                continue;
+            }
 
-                if (key_code > 0) {
-                    // Convert key code to row/col
-                    // TCA8418 key code = (row * 10) + col + 1
-                    uint8_t row = (key_code - 1) / 10;
-                    uint8_t col = (key_code - 1) % 10;
+            // Raw decode: TCA8418 key code = (row * 10) + col + 1
+            uint8_t raw_row = (key_code - 1) / 10;
+            uint8_t raw_col = (key_code - 1) % 10;
 
-                    // For extended columns (10-13), they use R4-R7 as additional columns
-                    // Key codes 41-80 map to extended matrix
-                    if (key_code > 40) {
-                        row = (key_code - 41) / 10;
-                        col = ((key_code - 41) % 10) + 10;
-                    }
+            // Cardputer Adv uses 7x8, so ignore events outside 0..6/0..7.
+            uint8_t row = raw_row;
+            uint8_t col = raw_col;
+            if (!RemapRawKeyToLogical(row, col)) {
+                ESP_LOGD(TAG, "Ignored key: code=%d raw_row=%d raw_col=%d", key_code, raw_row, raw_col);
+                continue;
+            }
 
-                    ESP_LOGD(TAG, "Key %s: code=%d, row=%d, col=%d",
-                             pressed ? "pressed" : "released", key_code, row, col);
+            ESP_LOGD(TAG, "Key %s: code=%d raw=(%d,%d) mapped=(%d,%d)",
+                     pressed ? "pressed" : "released", key_code, raw_row, raw_col, row, col);
 
-                    // Update modifier state first
-                    keyboard->UpdateModifierState(row, col, pressed);
+            keyboard->UpdateModifierState(row, col, pressed);
 
-                    // Generate full key event
-                    if (keyboard->key_event_callback_) {
-                        KeyEvent key_event = keyboard->MapKeyEvent(row, col, pressed);
-                        keyboard->key_event_callback_(key_event);
-                    }
+            if (keyboard->key_event_callback_) {
+                KeyEvent key_event = keyboard->MapKeyEvent(row, col, pressed);
+                keyboard->key_event_callback_(key_event);
+            }
 
-                    // Legacy callback (only for pressed events on specific keys)
-                    if (pressed && keyboard->key_callback_) {
-                        LegacyKeyCode mapped_key = keyboard->MapLegacyKeyCode(row, col);
-                        if (mapped_key != KEY_OTHER && mapped_key != KEY_NONE) {
-                            keyboard->key_callback_(mapped_key);
-                        }
-                    }
+            if (pressed && keyboard->key_callback_) {
+                LegacyKeyCode mapped_key = keyboard->MapLegacyKeyCode(row, col);
+                if (mapped_key != KEY_OTHER && mapped_key != KEY_NONE) {
+                    keyboard->key_callback_(mapped_key);
                 }
             }
         }
 
-        // Clear interrupt status
-        keyboard->WriteReg(TCA8418_REG_INT_STAT, int_stat);
+        // Clear all interrupt status bits (K_INT, GPI, overflow, etc.)
+        keyboard->WriteReg(TCA8418_REG_INT_STAT, 0x1F);
     }
 }
