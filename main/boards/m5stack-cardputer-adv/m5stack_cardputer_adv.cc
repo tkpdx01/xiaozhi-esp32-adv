@@ -21,8 +21,8 @@
 
 #define TAG "CardputerAdv"
 
-// Minimum brightness threshold (30%)
-#define MIN_BRIGHTNESS 77  // 30% of 255
+// Backlight uses percentage scale (0-100). Keep a minimum of 30% to avoid a too-dim screen.
+#define MIN_BRIGHTNESS 30
 
 class M5StackCardputerAdvBoard : public WifiBoard {
 private:
@@ -210,34 +210,32 @@ private:
             case KEY_RIGHT: {
                 // Brightness up
                 uint8_t current_br = backlight->brightness();
-                int step = (current_br < 51) ? 3 : 26;  // ~1% or ~10% of 255
-                int new_br = std::min(255, (int)current_br + step);
+                int step = (current_br < 20) ? 1 : 10;
+                int new_br = std::min(100, (int)current_br + step);
                 backlight->SetBrightness(new_br, true);
-                int percent = (new_br * 100) / 255;
                 char msg[32];
-                snprintf(msg, sizeof(msg), "Brightness: %d%%", percent);
+                snprintf(msg, sizeof(msg), "Brightness: %d%%", new_br);
                 display_->ShowNotification(msg, 1500);
-                ESP_LOGI(TAG, "Brightness up: %d%%", percent);
+                ESP_LOGI(TAG, "Brightness up: %d%%", new_br);
                 break;
             }
             case KEY_LEFT: {
                 // Brightness down (minimum 30%)
                 uint8_t current_br = backlight->brightness();
-                int step = (current_br <= 51) ? 3 : 26;  // ~1% or ~10% of 255
+                int step = (current_br <= 20) ? 1 : 10;
                 int new_br = std::max((int)MIN_BRIGHTNESS, (int)current_br - step);
                 backlight->SetBrightness(new_br, true);
-                int percent = (new_br * 100) / 255;
                 char msg[32];
-                snprintf(msg, sizeof(msg), "Brightness: %d%%", percent);
+                snprintf(msg, sizeof(msg), "Brightness: %d%%", new_br);
                 display_->ShowNotification(msg, 1500);
-                ESP_LOGI(TAG, "Brightness down: %d%%", percent);
+                ESP_LOGI(TAG, "Brightness down: %d%%", new_br);
                 break;
             }
             case KEY_ENTER: {
-                // Trigger listening
-                if (app.GetDeviceState() == kDeviceStateIdle) {
-                    app.StartListening();
-                    ESP_LOGI(TAG, "Enter key: Start listening");
+                // Match boot button behavior (start/stop chat depending on current state).
+                if (app.GetDeviceState() != kDeviceStateStarting) {
+                    app.ToggleChatState();
+                    ESP_LOGI(TAG, "Enter key: Toggle chat state");
                 }
                 break;
             }
