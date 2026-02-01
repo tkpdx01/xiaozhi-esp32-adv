@@ -134,6 +134,15 @@ static inline bool RemapRawKeyToLogical(uint8_t& row, uint8_t& col) {
     return true;
 }
 
+static inline uint64_t LogicalKeyMask(uint8_t row, uint8_t col) {
+    // 4x14 = 56 keys, fits in 64-bit
+    uint8_t idx = (row * 14) + col;
+    if (idx >= 64) {
+        return 0;
+    }
+    return 1ULL << idx;
+}
+
 Tca8418Keyboard::Tca8418Keyboard(i2c_master_bus_handle_t i2c_bus, uint8_t addr, gpio_num_t int_pin)
     : I2cDevice(i2c_bus, addr), int_pin_(int_pin) {
 }
@@ -369,6 +378,20 @@ void Tca8418Keyboard::KeyboardTask(void* arg) {
             if (!RemapRawKeyToLogical(row, col)) {
                 ESP_LOGD(TAG, "Ignored key: code=%d raw_row=%d raw_col=%d", key_code, raw_row, raw_col);
                 continue;
+            }
+
+            // De-duplicate spurious repeated press/release events (debounce/IRQ quirks).
+            const uint64_t mask = LogicalKeyMask(row, col);
+            if (mask != 0) {
+                const bool was_pressed = (keyboard->key_state_mask_ & mask) != 0;
+                if (pressed == was_pressed) {
+                    continue;
+                }
+                if (pressed) {
+                    keyboard->key_state_mask_ |= mask;
+                } else {
+                    keyboard->key_state_mask_ &= ~mask;
+                }
             }
 
             ESP_LOGD(TAG, "Key %s: code=%d raw=(%d,%d) mapped=(%d,%d)",

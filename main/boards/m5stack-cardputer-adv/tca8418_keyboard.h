@@ -138,6 +138,7 @@ private:
     volatile bool isr_flag_ = false;
     uint8_t modifier_mask_ = 0;
     bool caps_lock_on_ = false;
+    uint64_t key_state_mask_ = 0;  // 4x14 logical keys, bit=1 means pressed
 
     void ConfigureMatrix();
     void EnableInterrupts();
