@@ -1,4 +1,5 @@
 #include "wifi_board.h"
+#include "wifi_config_ui.h"
 #include "codecs/es8311_audio_codec.h"
 #include "display/lcd_display.h"
 #include "application.h"
@@ -13,7 +14,10 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
+#include <wifi_manager.h>
+#include <ssid_manager.h>
 #include <algorithm>
+#include <memory>
 
 #define TAG "CardputerAdv"
 
@@ -28,6 +32,8 @@ private:
     esp_lcd_panel_io_handle_t panel_io_ = nullptr;
     esp_lcd_panel_handle_t panel_ = nullptr;
     Tca8418Keyboard* keyboard_ = nullptr;
+    std::unique_ptr<WifiConfigUI> wifi_config_ui_;
+    bool wifi_config_mode_ = false;
 
     void InitializeI2c() {
         ESP_LOGI(TAG, "Initialize I2C bus");
@@ -127,12 +133,51 @@ private:
         ESP_LOGI(TAG, "Initialize TCA8418 keyboard");
         keyboard_ = new Tca8418Keyboard(i2c_bus_, KEYBOARD_TCA8418_ADDR, KEYBOARD_INT_PIN);
         keyboard_->Initialize();
-        keyboard_->SetKeyCallback([this](KeyCode key) {
-            HandleKeyPress(key);
+
+        // Set legacy callback for volume/brightness control
+        keyboard_->SetKeyCallback([this](LegacyKeyCode key) {
+            HandleLegacyKeyPress(key);
+        });
+
+        // Set full key event callback for WiFi config and text input
+        keyboard_->SetKeyEventCallback([this](const KeyEvent& event) {
+            HandleKeyEvent(event);
         });
     }
 
-    void HandleKeyPress(KeyCode key) {
+    void HandleKeyEvent(const KeyEvent& event) {
+        // Handle WiFi config mode
+        if (wifi_config_mode_ && wifi_config_ui_) {
+            auto result = wifi_config_ui_->HandleKeyEvent(event);
+            if (result == WifiConfigResult::Connected) {
+                ESP_LOGI(TAG, "WiFi connected via keyboard config");
+                ExitWifiConfigMode();
+            } else if (result == WifiConfigResult::Cancelled) {
+                ESP_LOGI(TAG, "WiFi config cancelled");
+                ExitWifiConfigMode();
+            }
+            return;
+        }
+
+        // Handle W and S keys during WiFi configuring state (scanning screen)
+        auto& app = Application::GetInstance();
+        if (app.GetDeviceState() == kDeviceStateWifiConfiguring && event.pressed) {
+            if (event.key_code == KC_W) {
+                ESP_LOGI(TAG, "W key pressed - entering keyboard WiFi config");
+                StartKeyboardWifiConfig();
+            } else if (event.key_code == KC_S) {
+                ESP_LOGI(TAG, "S key pressed - showing saved WiFi list");
+                StartKeyboardWifiConfigSaved();
+            }
+        }
+    }
+
+    void HandleLegacyKeyPress(LegacyKeyCode key) {
+        // Skip if in WiFi config mode
+        if (wifi_config_mode_) {
+            return;
+        }
+
         auto& app = Application::GetInstance();
         auto* codec = GetAudioCodec();
         auto* backlight = GetBacklight();
@@ -198,6 +243,71 @@ private:
             }
             default:
                 break;
+        }
+    }
+
+    void StartKeyboardWifiConfig() {
+        ESP_LOGI(TAG, "Starting keyboard WiFi config UI");
+        wifi_config_mode_ = true;
+        wifi_config_ui_ = std::make_unique<WifiConfigUI>(display_);
+        wifi_config_ui_->SetConnectCallback([this](const std::string& ssid, const std::string& password) {
+            AttemptWifiConnection(ssid, password);
+        });
+        wifi_config_ui_->Start();
+    }
+
+    void StartKeyboardWifiConfigSaved() {
+        ESP_LOGI(TAG, "Starting keyboard WiFi config UI (saved list)");
+        wifi_config_mode_ = true;
+        wifi_config_ui_ = std::make_unique<WifiConfigUI>(display_);
+        wifi_config_ui_->SetConnectCallback([this](const std::string& ssid, const std::string& password) {
+            AttemptWifiConnection(ssid, password);
+        });
+        wifi_config_ui_->Start();
+        // TODO: Navigate directly to saved list
+    }
+
+    void AttemptWifiConnection(const std::string& ssid, const std::string& password) {
+        ESP_LOGI(TAG, "Attempting WiFi connection to: %s", ssid.c_str());
+
+        // Add to SSID manager (will be saved and used for connection)
+        auto& ssid_manager = SsidManager::GetInstance();
+        ssid_manager.AddSsid(ssid, password);
+
+        // Stop config AP mode and trigger reconnection with new credentials
+        auto& wifi_manager = WifiManager::GetInstance();
+        if (wifi_manager.IsConfigMode()) {
+            wifi_manager.StopConfigAp();
+        }
+
+        // Start station mode to connect
+        wifi_manager.StartStation();
+
+        // Wait for connection result (with timeout)
+        bool connected = false;
+        for (int i = 0; i < 100; i++) {  // 10 second timeout
+            vTaskDelay(pdMS_TO_TICKS(100));
+            if (wifi_manager.IsConnected()) {
+                connected = true;
+                break;
+            }
+        }
+
+        if (wifi_config_ui_) {
+            wifi_config_ui_->OnConnectResult(connected);
+        }
+    }
+
+    void ExitWifiConfigMode() {
+        ESP_LOGI(TAG, "Exiting keyboard WiFi config mode");
+        wifi_config_mode_ = false;
+        wifi_config_ui_.reset();
+
+        // Restart normal WiFi connection flow
+        auto& app = Application::GetInstance();
+        if (app.GetDeviceState() == kDeviceStateWifiConfiguring) {
+            // Try to connect with saved credentials
+            TryWifiConnect();
         }
     }
 
