@@ -5,6 +5,7 @@
 #include "button.h"
 #include "config.h"
 #include "i2c_device.h"
+#include "tca8418_keyboard.h"
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
@@ -12,8 +13,12 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
+#include <algorithm>
 
 #define TAG "CardputerAdv"
+
+// Minimum brightness threshold (30%)
+#define MIN_BRIGHTNESS 77  // 30% of 255
 
 class M5StackCardputerAdvBoard : public WifiBoard {
 private:
@@ -22,6 +27,7 @@ private:
     Button boot_button_;
     esp_lcd_panel_io_handle_t panel_io_ = nullptr;
     esp_lcd_panel_handle_t panel_ = nullptr;
+    Tca8418Keyboard* keyboard_ = nullptr;
 
     void InitializeI2c() {
         ESP_LOGI(TAG, "Initialize I2C bus");
@@ -117,6 +123,84 @@ private:
         });
     }
 
+    void InitializeKeyboard() {
+        ESP_LOGI(TAG, "Initialize TCA8418 keyboard");
+        keyboard_ = new Tca8418Keyboard(i2c_bus_, KEYBOARD_TCA8418_ADDR, KEYBOARD_INT_PIN);
+        keyboard_->Initialize();
+        keyboard_->SetKeyCallback([this](KeyCode key) {
+            HandleKeyPress(key);
+        });
+    }
+
+    void HandleKeyPress(KeyCode key) {
+        auto& app = Application::GetInstance();
+        auto* codec = GetAudioCodec();
+        auto* backlight = GetBacklight();
+
+        switch (key) {
+            case KEY_UP: {
+                // Volume up
+                int current_vol = codec->output_volume();
+                int step = (current_vol < 20) ? 1 : 10;
+                int new_vol = std::min(100, current_vol + step);
+                codec->SetOutputVolume(new_vol);
+                char msg[32];
+                snprintf(msg, sizeof(msg), "Volume: %d%%", new_vol);
+                display_->ShowNotification(msg, 1500);
+                ESP_LOGI(TAG, "Volume up: %d%%", new_vol);
+                break;
+            }
+            case KEY_DOWN: {
+                // Volume down
+                int current_vol = codec->output_volume();
+                int step = (current_vol <= 20) ? 1 : 10;
+                int new_vol = std::max(0, current_vol - step);
+                codec->SetOutputVolume(new_vol);
+                char msg[32];
+                snprintf(msg, sizeof(msg), "Volume: %d%%", new_vol);
+                display_->ShowNotification(msg, 1500);
+                ESP_LOGI(TAG, "Volume down: %d%%", new_vol);
+                break;
+            }
+            case KEY_RIGHT: {
+                // Brightness up
+                uint8_t current_br = backlight->brightness();
+                int step = (current_br < 51) ? 3 : 26;  // ~1% or ~10% of 255
+                int new_br = std::min(255, (int)current_br + step);
+                backlight->SetBrightness(new_br, true);
+                int percent = (new_br * 100) / 255;
+                char msg[32];
+                snprintf(msg, sizeof(msg), "Brightness: %d%%", percent);
+                display_->ShowNotification(msg, 1500);
+                ESP_LOGI(TAG, "Brightness up: %d%%", percent);
+                break;
+            }
+            case KEY_LEFT: {
+                // Brightness down (minimum 30%)
+                uint8_t current_br = backlight->brightness();
+                int step = (current_br <= 51) ? 3 : 26;  // ~1% or ~10% of 255
+                int new_br = std::max((int)MIN_BRIGHTNESS, (int)current_br - step);
+                backlight->SetBrightness(new_br, true);
+                int percent = (new_br * 100) / 255;
+                char msg[32];
+                snprintf(msg, sizeof(msg), "Brightness: %d%%", percent);
+                display_->ShowNotification(msg, 1500);
+                ESP_LOGI(TAG, "Brightness down: %d%%", percent);
+                break;
+            }
+            case KEY_ENTER: {
+                // Trigger listening
+                if (app.GetDeviceState() == kDeviceStateIdle) {
+                    app.StartListening();
+                    ESP_LOGI(TAG, "Enter key: Start listening");
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
 public:
     M5StackCardputerAdvBoard() : boot_button_(BOOT_BUTTON_GPIO) {
         InitializeI2c();
@@ -124,6 +208,7 @@ public:
         InitializeSpi();
         InitializeSt7789Display();
         InitializeButtons();
+        InitializeKeyboard();
         GetBacklight()->RestoreBrightness();
     }
 
