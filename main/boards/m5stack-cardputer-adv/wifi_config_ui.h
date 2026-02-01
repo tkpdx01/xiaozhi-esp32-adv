@@ -59,6 +59,9 @@ public:
     // Check if UI is active
     bool IsActive() const { return is_active_; }
 
+    // Update cursor blink state (call periodically from main loop)
+    void UpdateCursor();
+
 private:
     LcdDisplay* display_;
     WifiConfigState state_;
@@ -119,7 +122,6 @@ private:
     void DrawInputField(const char* label, const std::string& value, bool is_password, bool is_active);
     void DrawWifiList(const std::vector<WifiScanResult>& list, int selected, int scroll_offset);
     void DrawSavedWifiList();
-    void UpdateCursor();
     std::string GetSignalBars(int8_t rssi);
     void LoadSavedWifiList();
     void SaveWifiCredentials(const std::string& ssid, const std::string& password);

@@ -49,8 +49,7 @@ void WifiConfigUI::StartWithSavedList() {
     input_password_.clear();
     selected_ssid_.clear();
 
-    // Load saved WiFi list and show it directly
-    LoadSavedWifiList();
+    // Show saved list directly (ShowSavedList will load the list)
     ShowSavedList();
 }
 
@@ -420,7 +419,8 @@ WifiConfigResult WifiConfigUI::HandleKeyEvent(const KeyEvent& event) {
         return WifiConfigResult::None;
     }
 
-    // Check for ESC to cancel from any state (except Success which needs Enter)
+    // Check for ESC to cancel from Scanning or SelectWifi states
+    // (other states handle ESC in their own handlers to navigate back)
     if (event.key_code == KC_ESC) {
         if (state_ == WifiConfigState::Scanning ||
             state_ == WifiConfigState::SelectWifi) {
