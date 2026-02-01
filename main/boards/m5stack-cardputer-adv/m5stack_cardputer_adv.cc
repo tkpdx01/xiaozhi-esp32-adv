@@ -186,7 +186,7 @@ private:
             case KEY_UP: {
                 // Volume up
                 int current_vol = codec->output_volume();
-                int step = (current_vol < 20) ? 1 : 10;
+                int step = (current_vol <= 20 || current_vol >= 80) ? 1 : 10;
                 int new_vol = std::min(100, current_vol + step);
                 codec->SetOutputVolume(new_vol);
                 char msg[32];
@@ -198,7 +198,7 @@ private:
             case KEY_DOWN: {
                 // Volume down
                 int current_vol = codec->output_volume();
-                int step = (current_vol <= 20) ? 1 : 10;
+                int step = (current_vol <= 20 || current_vol >= 80) ? 1 : 10;
                 int new_vol = std::max(0, current_vol - step);
                 codec->SetOutputVolume(new_vol);
                 char msg[32];
@@ -210,7 +210,7 @@ private:
             case KEY_RIGHT: {
                 // Brightness up
                 uint8_t current_br = backlight->brightness();
-                int step = (current_br < 20) ? 1 : 10;
+                int step = (current_br <= (MIN_BRIGHTNESS + 20) || current_br >= 80) ? 1 : 10;
                 int new_br = std::min(100, (int)current_br + step);
                 backlight->SetBrightness(new_br, true);
                 char msg[32];
@@ -222,7 +222,7 @@ private:
             case KEY_LEFT: {
                 // Brightness down (minimum 30%)
                 uint8_t current_br = backlight->brightness();
-                int step = (current_br <= 20) ? 1 : 10;
+                int step = (current_br <= (MIN_BRIGHTNESS + 20) || current_br >= 80) ? 1 : 10;
                 int new_br = std::max((int)MIN_BRIGHTNESS, (int)current_br - step);
                 backlight->SetBrightness(new_br, true);
                 char msg[32];
