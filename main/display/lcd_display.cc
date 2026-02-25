@@ -92,10 +92,10 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
                            int width, int height, int offset_x, int offset_y, bool mirror_x, bool mirror_y, bool swap_xy)
     : LcdDisplay(panel_io, panel, width, height) {
 
-    // draw white
+    // draw white (use offset so we clear the actual visible area of the ST7789 RAM)
     std::vector<uint16_t> buffer(width_, 0xFFFF);
     for (int y = 0; y < height_; y++) {
-        esp_lcd_panel_draw_bitmap(panel_, 0, y, width_, y + 1, buffer.data());
+        esp_lcd_panel_draw_bitmap(panel_, offset_x, y + offset_y, width_ + offset_x, y + offset_y + 1, buffer.data());
     }
 
     // Set the display to on
@@ -182,7 +182,7 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     // draw white
     std::vector<uint16_t> buffer(width_, 0xFFFF);
     for (int y = 0; y < height_; y++) {
-        esp_lcd_panel_draw_bitmap(panel_, 0, y, width_, y + 1, buffer.data());
+        esp_lcd_panel_draw_bitmap(panel_, offset_x, y + offset_y, width_ + offset_x, y + offset_y + 1, buffer.data());
     }
 
     ESP_LOGI(TAG, "Initialize LVGL library");
@@ -421,6 +421,12 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_font(battery_label_, icon_font, 0);
     lv_obj_set_style_text_color(battery_label_, lvgl_theme->text_color(), 0);
     lv_obj_set_style_margin_left(battery_label_, lvgl_theme->spacing(2), 0);
+
+    battery_percent_label_ = lv_label_create(right_icons);
+    lv_label_set_text(battery_percent_label_, "");
+    lv_obj_set_style_text_font(battery_percent_label_, text_font, 0);
+    lv_obj_set_style_text_color(battery_percent_label_, lvgl_theme->text_color(), 0);
+    lv_obj_set_style_pad_left(battery_percent_label_, lvgl_theme->spacing(1), 0);
 
     /* Layer 2: Status bar - for center text labels */
     status_bar_ = lv_obj_create(screen);
@@ -863,6 +869,12 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_font(battery_label_, icon_font, 0);
     lv_obj_set_style_text_color(battery_label_, lvgl_theme->text_color(), 0);
     lv_obj_set_style_margin_left(battery_label_, lvgl_theme->spacing(2), 0);
+
+    battery_percent_label_ = lv_label_create(right_icons);
+    lv_label_set_text(battery_percent_label_, "");
+    lv_obj_set_style_text_font(battery_percent_label_, text_font, 0);
+    lv_obj_set_style_text_color(battery_percent_label_, lvgl_theme->text_color(), 0);
+    lv_obj_set_style_pad_left(battery_percent_label_, lvgl_theme->spacing(1), 0);
 
     /* Layer 2: Status bar - for center text labels */
     status_bar_ = lv_obj_create(screen);

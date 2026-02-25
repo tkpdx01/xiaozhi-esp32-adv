@@ -124,6 +124,10 @@ private:
     Application();
     ~Application();
 
+    static constexpr int kLowBatteryReminderThresholdPercent = 30;
+    static constexpr int kLowBatteryReminderIntervalSeconds = 5 * 60;
+    static constexpr int kLowBatteryCheckIntervalSeconds = 10;
+
     std::mutex mutex_;
     std::deque<std::function<void()>> main_tasks_;
     std::unique_ptr<Protocol> protocol_;
@@ -141,6 +145,8 @@ private:
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     int clock_ticks_ = 0;
+    int last_low_battery_check_tick_ = 0;
+    int last_low_battery_reminder_tick_ = -kLowBatteryReminderIntervalSeconds;
     TaskHandle_t activation_task_handle_ = nullptr;
 
 
@@ -163,6 +169,7 @@ private:
     void InitializeProtocol();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
+    void MaybeRemindLowBattery();
     
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);

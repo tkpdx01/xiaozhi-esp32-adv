@@ -42,6 +42,7 @@
         "BATTERY_CHARGING": "正在充电",
         "BATTERY_FULL": "电量已满",
         "BATTERY_NEED_CHARGE": "电量低，请充电",
+        "BATTERY_LOW_REMINDER": "电量仅剩 %d%%，请尽快充电或插上充电宝",
         "VOLUME": "音量 ",
         "MUTED": "已静音",
         "MAX_VOLUME": "最大音量",

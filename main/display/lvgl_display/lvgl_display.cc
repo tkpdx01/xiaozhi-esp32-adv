@@ -3,6 +3,7 @@
 #include <string>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <font_awesome.h>
 
 #include "lvgl_display.h"
@@ -60,6 +61,9 @@ LvglDisplay::~LvglDisplay() {
     }
     if (battery_label_ != nullptr) {
         lv_obj_del(battery_label_);
+    }
+    if (battery_percent_label_ != nullptr) {
+        lv_obj_del(battery_percent_label_);
     }
     if( low_battery_popup_ != nullptr ) {
         lv_obj_del(low_battery_popup_);
@@ -143,6 +147,7 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
     bool charging, discharging;
     const char* icon = nullptr;
     if (board.GetBatteryLevel(battery_level, charging, discharging)) {
+        battery_level = std::clamp(battery_level, 0, 100);
         if (charging) {
             icon = FONT_AWESOME_BATTERY_BOLT;
         } else {
@@ -161,6 +166,12 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
             battery_icon_ = icon;
             lv_label_set_text(battery_label_, battery_icon_);
         }
+        if (battery_percent_label_ != nullptr && battery_percent_ != battery_level) {
+            battery_percent_ = battery_level;
+            char percent_text[8];
+            snprintf(percent_text, sizeof(percent_text), "%d%%", battery_percent_);
+            lv_label_set_text(battery_percent_label_, percent_text);
+        }
 
         if (low_battery_popup_ != nullptr) {
             if (strcmp(icon, FONT_AWESOME_BATTERY_EMPTY) == 0 && discharging) {
@@ -174,6 +185,16 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
                     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
                 }
             }
+        }
+    } else {
+        DisplayLockGuard lock(this);
+        if (battery_label_ != nullptr && battery_icon_ != nullptr) {
+            battery_icon_ = nullptr;
+            lv_label_set_text(battery_label_, "");
+        }
+        if (battery_percent_label_ != nullptr && battery_percent_ != -1) {
+            battery_percent_ = -1;
+            lv_label_set_text(battery_percent_label_, "");
         }
     }
 

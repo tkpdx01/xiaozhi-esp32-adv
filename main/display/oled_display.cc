@@ -98,6 +98,7 @@ OledDisplay::~OledDisplay() {
         network_label_ = nullptr;
         mute_label_ = nullptr;
         battery_label_ = nullptr;
+        battery_percent_label_ = nullptr;
         lv_obj_del(top_bar_);
     }
     if (side_bar_ != nullptr) {
@@ -107,6 +108,7 @@ OledDisplay::~OledDisplay() {
             network_label_ = nullptr;
             mute_label_ = nullptr;
             battery_label_ = nullptr;
+            battery_percent_label_ = nullptr;
         }
         lv_obj_del(side_bar_);
     }
@@ -203,6 +205,11 @@ void OledDisplay::SetupUI_128x64() {
     battery_label_ = lv_label_create(right_icons);
     lv_label_set_text(battery_label_, "");
     lv_obj_set_style_text_font(battery_label_, icon_font, 0);
+
+    battery_percent_label_ = lv_label_create(right_icons);
+    lv_label_set_text(battery_percent_label_, "");
+    lv_obj_set_style_text_font(battery_percent_label_, text_font, 0);
+    lv_obj_set_style_pad_left(battery_percent_label_, 2, 0);
 
     /* Layer 2: Status bar - for center text labels */
     status_bar_ = lv_obj_create(screen);
@@ -356,6 +363,11 @@ void OledDisplay::SetupUI_128x32() {
     battery_label_ = lv_label_create(status_bar_);
     lv_label_set_text(battery_label_, "");
     lv_obj_set_style_text_font(battery_label_, icon_font, 0);
+
+    battery_percent_label_ = lv_label_create(status_bar_);
+    lv_label_set_text(battery_percent_label_, "");
+    lv_obj_set_style_text_font(battery_percent_label_, text_font, 0);
+    lv_obj_set_style_pad_left(battery_percent_label_, 1, 0);
 
     chat_message_label_ = lv_label_create(side_bar_);
     lv_obj_set_size(chat_message_label_, width_ - 32, LV_SIZE_CONTENT);

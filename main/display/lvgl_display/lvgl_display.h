@@ -34,11 +34,13 @@ protected:
     lv_obj_t *notification_label_ = nullptr;
     lv_obj_t *mute_label_ = nullptr;
     lv_obj_t *battery_label_ = nullptr;
+    lv_obj_t *battery_percent_label_ = nullptr;
     lv_obj_t* low_battery_popup_ = nullptr;
     lv_obj_t* low_battery_label_ = nullptr;
     
     const char* battery_icon_ = nullptr;
     const char* network_icon_ = nullptr;
+    int battery_percent_ = -1;
     bool muted_ = false;
 
     std::chrono::system_clock::time_point last_status_update_time_;

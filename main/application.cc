@@ -16,6 +16,7 @@
 #include <driver/gpio.h>
 #include <arpa/inet.h>
 #include <font_awesome.h>
+#include <algorithm>
 
 #define TAG "Application"
 
@@ -249,6 +250,7 @@ void Application::Run() {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
+            MaybeRemindLowBattery();
         
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
@@ -256,6 +258,38 @@ void Application::Run() {
             }
         }
     }
+}
+
+void Application::MaybeRemindLowBattery() {
+    if (clock_ticks_ - last_low_battery_check_tick_ < kLowBatteryCheckIntervalSeconds) {
+        return;
+    }
+    last_low_battery_check_tick_ = clock_ticks_;
+
+    int battery_level = 0;
+    bool charging = false;
+    bool discharging = false;
+    if (!Board::GetInstance().GetBatteryLevel(battery_level, charging, discharging)) {
+        return;
+    }
+
+    battery_level = std::clamp(battery_level, 0, 100);
+    if (charging || !discharging || battery_level >= kLowBatteryReminderThresholdPercent) {
+        // Reset the cadence so we remind promptly next time it drops low while discharging.
+        last_low_battery_reminder_tick_ = clock_ticks_ - kLowBatteryReminderIntervalSeconds;
+        return;
+    }
+
+    if (clock_ticks_ - last_low_battery_reminder_tick_ < kLowBatteryReminderIntervalSeconds) {
+        return;
+    }
+    last_low_battery_reminder_tick_ = clock_ticks_;
+
+    char message[128];
+    snprintf(message, sizeof(message), Lang::Strings::BATTERY_LOW_REMINDER, battery_level);
+    auto display = Board::GetInstance().GetDisplay();
+    display->ShowNotification(message, 10000);
+    audio_service_.PlaySound(Lang::Sounds::OGG_LOW_BATTERY);
 }
 
 void Application::HandleNetworkConnectedEvent() {
@@ -397,12 +431,10 @@ void Application::CheckNewVersion() {
     const int MAX_RETRY = 10;
     int retry_count = 0;
     int retry_delay = 10; // Initial retry delay in seconds
-
+	
     auto& board = Board::GetInstance();
     while (true) {
         auto display = board.GetDisplay();
-        display->SetStatus(Lang::Strings::CHECKING_NEW_VERSION);
-
         esp_err_t err = ota_->CheckVersion();
         if (err != ESP_OK) {
             retry_count++;
@@ -413,11 +445,9 @@ void Application::CheckNewVersion() {
 
             char error_message[128];
             snprintf(error_message, sizeof(error_message), "code=%d, url=%s", err, ota_->GetCheckVersionUrl().c_str());
-            char buffer[256];
-            snprintf(buffer, sizeof(buffer), Lang::Strings::CHECK_NEW_VERSION_FAILED, retry_delay, error_message);
-            Alert(Lang::Strings::ERROR, buffer, "cloud_slash", Lang::Sounds::OGG_EXCLAMATION);
+            ESP_LOGW(TAG, "Sync config failed, retry in %d seconds (%d/%d): %s", retry_delay, retry_count, MAX_RETRY, error_message);
+            Alert(Lang::Strings::ERROR, Lang::Strings::SERVER_NOT_CONNECTED, "cloud_slash", Lang::Sounds::OGG_EXCLAMATION);
 
-            ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay, retry_count, MAX_RETRY);
             for (int i = 0; i < retry_delay; i++) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 if (GetDeviceState() == kDeviceStateIdle) {
@@ -430,17 +460,10 @@ void Application::CheckNewVersion() {
         retry_count = 0;
         retry_delay = 10; // Reset retry delay
 
-        if (ota_->HasNewVersion()) {
-            if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
-                return; // This line will never be reached after reboot
-            }
-            // If upgrade failed, continue to normal operation
-        }
-
-        // No new version, mark the current version as valid
+        // Cancel automatic firmware upgrade checks; still mark current version valid to avoid rollback loops.
         ota_->MarkCurrentVersionValid();
         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
-            // Exit the loop if done checking new version
+            // Exit the loop if activation/config sync is done
             break;
         }
 
@@ -1060,4 +1083,3 @@ void Application::ResetProtocol() {
         protocol_.reset();
     });
 }
-
